@@ -55,6 +55,7 @@ dependencies {
   kapt("org.springframework.boot:spring-boot-configuration-processor:${libs.versions.springboot.get()}")
 
   implementation("org.flywaydb:flyway-core")
+  implementation("org.flywaydb:flyway-database-postgresql")
 
   api("io.github.oshai:kotlin-logging-jvm:7.0.7")
 
@@ -105,7 +106,9 @@ dependencies {
   implementation("com.github.ben-manes.caffeine:caffeine")
 
   implementation("org.xerial:sqlite-jdbc:${libs.versions.sqliteJdbc.get()}")
+  implementation("org.postgresql:postgresql:42.7.4")
   jooqGenerator("org.xerial:sqlite-jdbc:${libs.versions.sqliteJdbc.get()}")
+  jooqGenerator("org.postgresql:postgresql:42.7.4")
 
   if (version.toString().endsWith(".0.0")) {
     ksp("com.github.gotson.bestbefore:bestbefore-processor-kotlin:0.2.0")
@@ -249,6 +252,11 @@ val sqliteUrls =
     "main" to "jdbc:sqlite:${project.layout.buildDirectory.get()}/generated/flyway/main/database.sqlite",
     "tasks" to "jdbc:sqlite:${project.layout.buildDirectory.get()}/generated/flyway/tasks/tasks.sqlite",
   )
+val postgresqlUrls =
+  mapOf(
+    "main" to "jdbc:postgresql://localhost:5432/komga",
+    "tasks" to "jdbc:postgresql://localhost:5432/komga_tasks",
+  )
 val sqliteMigrationDirs =
   mapOf(
     "main" to
@@ -260,6 +268,19 @@ val sqliteMigrationDirs =
       listOf(
         "$projectDir/src/flyway/resources/tasks/migration/sqlite",
 //    "$projectDir/src/flyway/kotlin/tasks/migration/sqlite",
+      ),
+  )
+val postgresqlMigrationDirs =
+  mapOf(
+    "main" to
+      listOf(
+        "$projectDir/src/flyway/resources/db/migration/postgresql",
+        "$projectDir/src/flyway/kotlin/db/migration/postgresql",
+      ),
+    "tasks" to
+      listOf(
+        "$projectDir/src/flyway/resources/tasks/migration/postgresql",
+//    "$projectDir/src/flyway/kotlin/tasks/migration/postgresql",
       ),
   )
 
@@ -296,6 +317,47 @@ tasks.register("flywayMigrateTasks", FlywayMigrateTask::class) {
   doFirst {
     delete(outputs.files)
     mkdir("${project.layout.buildDirectory.get()}/generated/flyway/$id")
+  }
+  mixed = true
+}
+
+tasks.register("flywayMigrateMainPostgreSQL", FlywayMigrateTask::class) {
+  val id = "main"
+  url = postgresqlUrls[id]
+  user = System.getenv("POSTGRES_USER") ?: "komga"
+  password = System.getenv("POSTGRES_PASSWORD") ?: "komga"
+  locations = arrayOf("classpath:db/migration/postgresql")
+  placeholders =
+    mapOf(
+      "library-file-hashing" to "true",
+      "library-scan-startup" to "false",
+      "delete-empty-collections" to "true",
+      "delete-empty-read-lists" to "true",
+    )
+  // in order to include the Java migrations, flywayClasses must be run before flywayMigrate
+  dependsOn("flywayClasses")
+  postgresqlMigrationDirs[id]?.forEach { inputs.dir(it) }
+  outputs.dir("${project.layout.buildDirectory.get()}/generated/flyway/postgresql/$id")
+  doFirst {
+    delete(outputs.files)
+    mkdir("${project.layout.buildDirectory.get()}/generated/flyway/postgresql/$id")
+  }
+  mixed = true
+}
+
+tasks.register("flywayMigrateTasksPostgreSQL", FlywayMigrateTask::class) {
+  val id = "tasks"
+  url = postgresqlUrls[id]
+  user = System.getenv("POSTGRES_USER") ?: "komga"
+  password = System.getenv("POSTGRES_PASSWORD") ?: "komga"
+  locations = arrayOf("classpath:tasks/migration/postgresql")
+  // in order to include the Java migrations, flywayClasses must be run before flywayMigrate
+  dependsOn("flywayClasses")
+  postgresqlMigrationDirs[id]?.forEach { inputs.dir(it) }
+  outputs.dir("${project.layout.buildDirectory.get()}/generated/flyway/postgresql/$id")
+  doFirst {
+    delete(outputs.files)
+    mkdir("${project.layout.buildDirectory.get()}/generated/flyway/postgresql/$id")
   }
   mixed = true
 }
@@ -345,6 +407,48 @@ jooq {
         }
       }
     }
+    create("mainPostgreSQL") {
+      jooqConfiguration.apply {
+        logging = org.jooq.meta.jaxb.Logging.WARN
+        jdbc.apply {
+          driver = "org.postgresql.Driver"
+          url = postgresqlUrls["main"]
+          user = System.getenv("POSTGRES_USER") ?: "komga"
+          password = System.getenv("POSTGRES_PASSWORD") ?: "komga"
+        }
+        generator.apply {
+          database.apply {
+            name = "org.jooq.meta.postgres.PostgresDatabase"
+            inputSchema = "public"
+          }
+          target.apply {
+            packageName = "org.gotson.komga.jooq.main"
+            directory = "build/generated-src/jooq/main"
+          }
+        }
+      }
+    }
+    create("tasksPostgreSQL") {
+      jooqConfiguration.apply {
+        logging = org.jooq.meta.jaxb.Logging.WARN
+        jdbc.apply {
+          driver = "org.postgresql.Driver"
+          url = postgresqlUrls["tasks"]
+          user = System.getenv("POSTGRES_USER") ?: "komga"
+          password = System.getenv("POSTGRES_PASSWORD") ?: "komga"
+        }
+        generator.apply {
+          database.apply {
+            name = "org.jooq.meta.postgres.PostgresDatabase"
+            inputSchema = "public"
+          }
+          target.apply {
+            packageName = "org.gotson.komga.jooq.tasks"
+            directory = "build/generated-src/jooq/tasks"
+          }
+        }
+      }
+    }
   }
 }
 tasks.named<JooqGenerate>("generateJooq") {
@@ -356,6 +460,16 @@ tasks.named<JooqGenerate>("generateTasksJooq") {
   sqliteMigrationDirs["tasks"]?.forEach { inputs.dir(it) }
   allInputsDeclared = true
   dependsOn("flywayMigrateTasks")
+}
+tasks.named<JooqGenerate>("generateMainPostgreSQLJooq") {
+  postgresqlMigrationDirs["main"]?.forEach { inputs.dir(it) }
+  allInputsDeclared = true
+  dependsOn("flywayMigrateMainPostgreSQL")
+}
+tasks.named<JooqGenerate>("generateTasksPostgreSQLJooq") {
+  postgresqlMigrationDirs["tasks"]?.forEach { inputs.dir(it) }
+  allInputsDeclared = true
+  dependsOn("flywayMigrateTasksPostgreSQL")
 }
 
 tasks.whenTaskAdded {

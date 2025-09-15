@@ -1,0 +1,38 @@
+-- User roles migration for PostgreSQL
+-- Converted from SQLite user roles migration
+
+-- Create USER_ROLE table
+CREATE TABLE USER_ROLE (
+    USER_ID VARCHAR(36) NOT NULL,
+    ROLE VARCHAR NOT NULL,
+    PRIMARY KEY (USER_ID, ROLE),
+    FOREIGN KEY (USER_ID) REFERENCES "USER"(ID) ON DELETE CASCADE
+);
+
+-- Migrate existing role data from USER table columns to USER_ROLE table
+-- Insert ADMIN role for users with ROLE_ADMIN = true
+INSERT INTO USER_ROLE (USER_ID, ROLE)
+SELECT ID, 'ADMIN'
+FROM "USER"
+WHERE ROLE_ADMIN = true;
+
+-- Insert FILE_DOWNLOAD role for users with ROLE_FILE_DOWNLOAD = true
+INSERT INTO USER_ROLE (USER_ID, ROLE)
+SELECT ID, 'FILE_DOWNLOAD'
+FROM "USER"
+WHERE ROLE_FILE_DOWNLOAD = true;
+
+-- Insert PAGE_STREAMING role for users with ROLE_PAGE_STREAMING = true
+INSERT INTO USER_ROLE (USER_ID, ROLE)
+SELECT ID, 'PAGE_STREAMING'
+FROM "USER"
+WHERE ROLE_PAGE_STREAMING = true;
+
+-- Remove old role columns from USER table
+ALTER TABLE "USER" DROP COLUMN IF EXISTS ROLE_ADMIN;
+ALTER TABLE "USER" DROP COLUMN IF EXISTS ROLE_FILE_DOWNLOAD;
+ALTER TABLE "USER" DROP COLUMN IF EXISTS ROLE_PAGE_STREAMING;
+
+-- Create index for performance
+CREATE INDEX idx_user_role_user_id ON USER_ROLE(USER_ID);
+CREATE INDEX idx_user_role_role ON USER_ROLE(ROLE);
